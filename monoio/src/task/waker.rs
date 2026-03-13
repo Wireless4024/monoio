@@ -6,12 +6,33 @@ use std::{
     ptr::NonNull,
     task::{RawWaker, RawWakerVTable, Waker},
 };
-
+use std::task::LocalWaker;
 use super::{core::Header, harness::Harness, Schedule};
 
 pub(super) struct WakerRef<'a, S: 'static> {
     waker: ManuallyDrop<Waker>,
     _p: PhantomData<(&'a Header, S)>,
+}
+
+impl<S> ops::Deref for WakerRef<'_, S> {
+    type Target = Waker;
+
+    fn deref(&self) -> &Waker {
+        &self.waker
+    }
+}
+
+pub(super) struct LocalWakerRef<'a, S: 'static> {
+    waker: ManuallyDrop<LocalWaker>,
+    _p: PhantomData<(&'a Header, S)>,
+}
+
+impl<S> ops::Deref for LocalWakerRef<'_, S> {
+    type Target = LocalWaker;
+
+    fn deref(&self) -> &LocalWaker {
+        &self.waker
+    }
 }
 
 /// Returns a `WakerRef` which avoids having to pre-emptively increase the
@@ -29,7 +50,7 @@ where
     // point and not an *owned* waker, we must ensure that `drop` is never
     // called on this waker instance. This is done by wrapping it with
     // `ManuallyDrop` and then never calling drop.
-    let waker = unsafe { ManuallyDrop::new(Waker::from_raw(raw_waker::<T, S>(header))) };
+    let waker = unsafe { ManuallyDrop::new(Waker::from_raw(raw_waker::<T, S, false>(header))) };
 
     WakerRef {
         waker,
@@ -37,43 +58,62 @@ where
     }
 }
 
-impl<S> ops::Deref for WakerRef<'_, S> {
-    type Target = Waker;
+/// Returns a `LocalWakerRef` which avoids having to pre-emptively increase the
+/// refcount if there is no need to do so.
+pub(super) fn local_waker_ref<T, S>(header: &Header) -> LocalWakerRef<'_, S>
+where
+    T: Future,
+    S: Schedule,
+{
+    // `Waker::will_wake` uses the VTABLE pointer as part of the check. This
+    // means that `will_wake` will always return false when using the current
+    // task's waker. (discussion at rust-lang/rust#66281).
+    //
+    // To fix this, we use a single vtable. Since we pass in a reference at this
+    // point and not an *owned* waker, we must ensure that `drop` is never
+    // called on this waker instance. This is done by wrapping it with
+    // `ManuallyDrop` and then never calling drop.
+    let waker = unsafe { ManuallyDrop::new(LocalWaker::from_raw(raw_waker::<T, S, true>(header))) };
 
-    fn deref(&self) -> &Waker {
-        &self.waker
+    LocalWakerRef {
+        waker,
+        _p: PhantomData,
     }
 }
 
-unsafe fn clone_waker<T, S>(ptr: *const ()) -> RawWaker
+unsafe fn clone_waker<T, S, const LOCAL: bool>(ptr: *const ()) -> RawWaker
 where
     T: Future,
     S: Schedule,
 {
     let header = ptr as *const Header;
     trace!("MONOIO DEBUG[Waker]: clone_waker");
-    (*header).state.ref_inc();
-    raw_waker::<T, S>(header)
+    if LOCAL {
+        (*header).state.ref_inc_local();
+    } else {
+        (*header).state.ref_inc();
+    }
+    raw_waker::<T, S, LOCAL>(header)
 }
 
-unsafe fn drop_waker<T, S>(ptr: *const ())
+unsafe fn drop_waker<T, S, const LOCAL: bool>(ptr: *const ())
 where
     T: Future,
     S: Schedule,
 {
     let ptr = NonNull::new_unchecked(ptr as *mut Header);
     let harness = Harness::<T, S>::from_raw(ptr);
-    harness.drop_reference();
+    harness.drop_reference::<LOCAL>();
 }
 
-unsafe fn wake_by_val<T, S>(ptr: *const ())
+unsafe fn wake_by_val<T, S, const LOCAL: bool>(ptr: *const ())
 where
     T: Future,
     S: Schedule,
 {
     let ptr = NonNull::new_unchecked(ptr as *mut Header);
     let harness = Harness::<T, S>::from_raw(ptr);
-    harness.wake_by_val();
+    harness.wake_by_val::<LOCAL>();
 }
 
 // Wake without consuming the waker
@@ -87,17 +127,17 @@ where
     harness.wake_by_ref();
 }
 
-pub(super) fn raw_waker<T, S>(header: *const Header) -> RawWaker
+pub(super) fn raw_waker<T, S, const LOCAL: bool>(header: *const Header) -> RawWaker
 where
     T: Future,
     S: Schedule,
 {
     let ptr = header as *const ();
     let vtable = &RawWakerVTable::new(
-        clone_waker::<T, S>,
-        wake_by_val::<T, S>,
+        clone_waker::<T, S, LOCAL>,
+        wake_by_val::<T, S, LOCAL>,
         wake_by_ref::<T, S>,
-        drop_waker::<T, S>,
+        drop_waker::<T, S, LOCAL>,
     );
     RawWaker::new(ptr, vtable)
 }

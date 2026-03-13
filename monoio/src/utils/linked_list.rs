@@ -121,7 +121,7 @@ impl<L: Link> LinkedList<L, L::Target> {
         // The value should not be dropped, it is being inserted into the list
         let val = ManuallyDrop::new(val);
         let ptr = L::as_raw(&val);
-        assert_ne!(self.head, Some(ptr));
+        debug_assert_ne!(self.head, Some(ptr));
         unsafe {
             L::pointers(ptr).as_mut().set_next(self.head);
             L::pointers(ptr).as_mut().set_prev(None);
@@ -164,7 +164,7 @@ impl<L: Link> LinkedList<L, L::Target> {
             return false;
         }
 
-        assert!(self.tail.is_none());
+        debug_assert!(self.tail.is_none());
         true
     }
 

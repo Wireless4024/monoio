@@ -1,8 +1,9 @@
 use std::{
     future::Future,
+    hint::unlikely,
     panic,
     ptr::NonNull,
-    task::{Context, Poll, Waker},
+    task::{Context, ContextBuilder, Poll, Waker},
 };
 
 use super::utils::UnsafeCellExt;
@@ -10,7 +11,7 @@ use crate::{
     task::{
         core::{Cell, Core, CoreStage, Header, Trailer},
         state::Snapshot,
-        waker::waker_ref,
+        waker::{local_waker_ref, waker_ref},
         Schedule, Task,
     },
     utils::thread_id::{try_get_current_thread_id, DEFAULT_THREAD_ID},
@@ -55,7 +56,7 @@ where
         match self.poll_inner() {
             PollFuture::Notified => {
                 // We should re-schedule the task.
-                self.header().state.ref_inc();
+                self.header().state.ref_inc_local();
                 self.core().scheduler.yield_now(self.get_new_task());
             }
             PollFuture::Complete => {
@@ -75,7 +76,10 @@ where
 
         // poll the future
         let waker_ref = waker_ref::<T, S>(self.header());
-        let cx = Context::from_waker(&waker_ref);
+        let local_waker_ref = local_waker_ref::<T, S>(self.header());
+        let cx = ContextBuilder::from_waker(&waker_ref)
+            .local_waker(&local_waker_ref)
+            .build();
         let res = poll_future(&self.core().stage, cx);
 
         if res == Poll::Ready(()) {
@@ -121,6 +125,7 @@ where
         }
     }
 
+    #[cold]
     pub(super) fn drop_join_handle_slow(self) {
         trace!("MONOIO DEBUG[Harness]:: drop_join_handle_slow");
 
@@ -144,7 +149,7 @@ where
         }
 
         // Drop the `JoinHandle` reference, possibly deallocating the task
-        self.drop_reference();
+        self.drop_reference::<false>();
 
         if let Some(panic) = maybe_panic {
             panic::resume_unwind(panic);
@@ -158,12 +163,12 @@ where
     ///
     /// The caller does not need to hold a ref-count besides the one that was
     /// passed to this call.
-    pub(super) fn wake_by_val(self) {
+    pub(super) fn wake_by_val<const LOCAL: bool>(self) {
         trace!("MONOIO DEBUG[Harness]:: wake_by_val");
         let owner_id = self.header().owner_id;
         if is_remote_task(owner_id) {
             if self.header().state.transition_to_notified_without_submit() {
-                self.drop_reference();
+                self.drop_reference::<LOCAL>();
                 return;
             }
             // send to target thread
@@ -171,7 +176,7 @@ where
             #[cfg(feature = "sync")]
             {
                 use crate::task::waker::raw_waker;
-                let waker = raw_waker::<T, S>(self.cell.cast::<Header>().as_ptr());
+                let waker = raw_waker::<T, S, false>(self.cell.cast::<Header>().as_ptr());
                 // # Ref Count: self -> waker
                 let waker = unsafe { Waker::from_raw(waker) };
                 crate::runtime::CURRENT.try_with(|maybe_ctx| match maybe_ctx {
@@ -206,7 +211,7 @@ where
             }
             TransitionToNotified::DoNothing => {
                 // # Ref Count: self -> -1
-                self.drop_reference();
+                self.drop_reference::<LOCAL>();
             }
         }
     }
@@ -217,7 +222,8 @@ where
     pub(super) fn wake_by_ref(&self) {
         trace!("MONOIO DEBUG[Harness]:: wake_by_ref");
         let owner_id = self.header().owner_id;
-        if is_remote_task(owner_id) {
+        let remote = is_remote_task(owner_id);
+        if remote {
             if self.header().state.transition_to_notified_without_submit() {
                 return;
             }
@@ -227,7 +233,7 @@ where
             #[cfg(feature = "sync")]
             {
                 use crate::task::waker::raw_waker;
-                let waker = raw_waker::<T, S>(self.cell.cast::<Header>().as_ptr());
+                let waker = raw_waker::<T, S, false>(self.cell.cast::<Header>().as_ptr());
                 // We create a new waker so we need to inc ref count.
                 let waker = unsafe { Waker::from_raw(waker) };
                 self.header().state.ref_inc();
@@ -259,16 +265,25 @@ where
         match self.header().state.transition_to_notified() {
             TransitionToNotified::Submit => {
                 // # Ref Count: +1 -> task
-                self.header().state.ref_inc();
+                if unlikely(remote) {
+                    self.header().state.ref_inc();
+                } else {
+                    self.header().state.ref_inc_local();
+                }
                 self.core().scheduler.schedule(self.get_new_task());
             }
             TransitionToNotified::DoNothing => (),
         }
     }
 
-    pub(super) fn drop_reference(self) {
+    pub(super) fn drop_reference<const LOCAL: bool>(self) {
         trace!("MONOIO DEBUG[Harness]:: drop_reference");
-        if self.header().state.ref_dec() {
+        let destroy = if LOCAL {
+            self.header().state.ref_dec_local()
+        } else {
+            self.header().state.ref_dec()
+        };
+        if destroy {
             self.dealloc();
         }
     }

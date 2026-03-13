@@ -251,7 +251,8 @@ fn level_range(level: usize) -> u64 {
 
 /// Convert a duration (milliseconds) and a level to a slot position
 fn slot_for(duration: u64, level: usize) -> usize {
-    ((duration >> (level * 6)) % LEVEL_MULT as u64) as usize
+    const _: () = assert!(LEVEL_MULT == 64, "LEVEL_MULT must be 64");
+    ((duration >> (level * 6)) & 63) as usize
 }
 
 #[cfg(all(test, not(loom)))]

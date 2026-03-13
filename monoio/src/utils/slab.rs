@@ -38,7 +38,7 @@ impl<T> Slab<T> {
     #[allow(unused)]
     pub(crate) fn len(&self) -> usize {
         self.pages.iter().fold(0, |acc, page| match page {
-            Some(page) => acc + page.used,
+            Some(page) => acc + page.used as usize,
             None => acc,
         })
     }
@@ -51,7 +51,7 @@ impl<T> Slab<T> {
             Some(page) => page,
             None => return None,
         };
-        let index = key - page.prev_len;
+        let index = key - page.prev_len as usize;
         match page.get_entry_mut(index) {
             None => None,
             Some(entry) => match entry {
@@ -71,8 +71,8 @@ impl<T> Slab<T> {
                     Some(page) => page,
                     None => {
                         let page = Page::new(
-                            PAGE_INITIAL_SIZE << i,
-                            (PAGE_INITIAL_SIZE << i) - PAGE_INITIAL_SIZE,
+                            (PAGE_INITIAL_SIZE << i) as u32,
+                            ((PAGE_INITIAL_SIZE << i) - PAGE_INITIAL_SIZE) as u32,
                         );
                         let r = self.pages.get_unchecked_mut(i);
                         *r = Some(page);
@@ -82,7 +82,7 @@ impl<T> Slab<T> {
                 if let Some(slot) = page.alloc() {
                     page.set(slot, val);
                     self.w_page_id = i;
-                    return slot + page.prev_len;
+                    return slot + page.prev_len as usize;
                 }
             }
         }
@@ -97,7 +97,7 @@ impl<T> Slab<T> {
             Some(page) => page,
             None => return None,
         };
-        let val = page.remove(key - page.prev_len);
+        let val = page.remove(key - page.prev_len as usize);
         self.mark_remove();
         val
     }
@@ -184,7 +184,7 @@ impl<T> DerefMut for Ref<'_, T> {
 }
 
 enum Entry<T> {
-    Vacant(usize),
+    Vacant(u32),
     Occupied(T),
 }
 
@@ -219,19 +219,19 @@ struct Page<T> {
     // continued buffer of fixed size
     slots: Box<[MaybeUninit<Entry<T>>]>,
     // number of occupied slots
-    used: usize,
+    used: u32,
     // number of initialized slots
-    initialized: usize,
+    initialized: u32,
     // next slot to write
-    next: usize,
+    next: u32,
     // sum of previous page's slots count
-    prev_len: usize,
+    prev_len: u32,
 }
 
 impl<T> Page<T> {
-    fn new(size: usize, prev_len: usize) -> Self {
-        let mut buffer = Vec::with_capacity(size);
-        unsafe { buffer.set_len(size) };
+    fn new(size: u32, prev_len: u32) -> Self {
+        let mut buffer = Vec::with_capacity(size as usize);
+        unsafe { buffer.set_len(size as usize) };
         let slots = buffer.into_boxed_slice();
         Self {
             slots,
@@ -247,7 +247,7 @@ impl<T> Page<T> {
     }
 
     fn is_full(&self) -> bool {
-        self.used == self.slots.len()
+        self.used == self.slots.len() as u32
     }
 
     // alloc a slot
@@ -257,7 +257,7 @@ impl<T> Page<T> {
         let next = self.next;
         if self.is_full() {
             // current page is full
-            debug_assert_eq!(next, self.slots.len(), "next should eq to slots.len()");
+            debug_assert_eq!(next as usize, self.slots.len(), "next should eq to slots.len()");
             return None;
         } else if next >= self.initialized {
             // the slot to write is not initialized
@@ -267,16 +267,16 @@ impl<T> Page<T> {
         } else {
             // the slot has already been initialized
             // it must be Vacant
-            let slot = self.slots.get_unchecked(next).assume_init_ref();
+            let slot = self.slots.get_unchecked(next as usize).assume_init_ref();
             match slot {
                 Entry::Vacant(next_slot) => {
-                    self.next = *next_slot;
+                    self.next = (*next_slot) as u32;
                 }
                 _ => std::hint::unreachable_unchecked(),
             }
         }
         self.used += 1;
-        Some(next)
+        Some(next as usize)
     }
 
     // set value of the slot
@@ -287,28 +287,28 @@ impl<T> Page<T> {
     }
 
     fn get(&self, slot: usize) -> Option<&T> {
-        if slot >= self.initialized {
+        if slot >= self.initialized as usize {
             return None;
         }
         unsafe { self.slots.get_unchecked(slot).assume_init_ref() }.as_ref()
     }
 
     fn get_mut(&mut self, slot: usize) -> Option<&mut T> {
-        if slot >= self.initialized {
+        if slot >= self.initialized as usize {
             return None;
         }
         unsafe { self.slots.get_unchecked_mut(slot).assume_init_mut() }.as_mut()
     }
 
     fn get_entry_mut(&mut self, slot: usize) -> Option<&mut Entry<T>> {
-        if slot >= self.initialized {
+        if slot >= self.initialized as usize as usize {
             return None;
         }
         unsafe { Some(self.slots.get_unchecked_mut(slot).assume_init_mut()) }
     }
 
     fn remove(&mut self, slot: usize) -> Option<T> {
-        if slot >= self.initialized {
+        if slot >= self.initialized as usize {
             return None;
         }
         unsafe {
@@ -317,7 +317,7 @@ impl<T> Page<T> {
                 return None;
             }
             let val = std::mem::replace(slot_mut, Entry::Vacant(self.next));
-            self.next = slot;
+            self.next = slot as u32;
             self.used -= 1;
 
             Some(val.unwrap_unchecked())
@@ -335,7 +335,7 @@ impl<T> Drop for Page<T> {
                 to_drop.set_len(0);
             } else {
                 // slow drop
-                to_drop.set_len(self.initialized);
+                to_drop.set_len(self.initialized as usize);
                 std::mem::transmute::<Vec<MaybeUninit<Entry<T>>>, Vec<Entry<T>>>(to_drop);
             }
         }

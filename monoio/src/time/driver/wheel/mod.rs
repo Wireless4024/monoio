@@ -1,3 +1,4 @@
+use std::hint::unlikely;
 use crate::time::{
     driver::{TimerHandle, TimerShared},
     error::InsertError,
@@ -262,7 +263,7 @@ impl Wheel {
     }
 
     fn set_elapsed(&mut self, when: u64) {
-        assert!(
+        debug_assert!(
             self.elapsed <= when,
             "elapsed={:?}; when={:?}",
             self.elapsed,
@@ -292,7 +293,7 @@ fn level_for(elapsed: u64, when: u64) -> usize {
     // the possible leading zeros
     let mut masked = elapsed ^ when | SLOT_MASK;
 
-    if masked >= MAX_DURATION {
+    if unlikely(masked >= MAX_DURATION) {
         // Fudge the timer into the top level
         masked = MAX_DURATION - 1;
     }

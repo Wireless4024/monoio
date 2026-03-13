@@ -21,5 +21,7 @@ pub use self::ctrlc::{CtrlC, Error as CtrlCError};
 
 #[cfg(feature = "utils")]
 mod bind_to_cpu_set;
+pub(crate) mod local_atomic;
+
 #[cfg(feature = "utils")]
 pub use bind_to_cpu_set::{bind_to_cpu_set, BindError};

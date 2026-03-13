@@ -1,10 +1,13 @@
 use std::{
     fmt,
+    hint::unlikely,
     sync::atomic::{
         AtomicUsize,
         Ordering::{AcqRel, Acquire},
     },
 };
+
+use crate::utils::local_atomic::{fetch_add_local, fetch_sub_local};
 
 pub(crate) struct State(AtomicUsize);
 
@@ -238,8 +241,22 @@ impl State {
         );
 
         // If the reference count overflowed, abort.
-        if prev.0 > isize::MAX as usize {
+        if unlikely(prev.0 > isize::MAX as usize) {
             process::abort();
+        }
+    }
+
+    pub(crate) fn ref_inc_local(&self) {
+        let prev = Snapshot(fetch_add_local(&self.0, REF_ONE));
+        trace!(
+            "MONOIO DEBUG[State]: ref_inc_local {}, ptr: {:p}",
+            prev.ref_count() + 1,
+            self
+        );
+
+        // If the reference count overflowed, abort.
+        if unlikely(prev.0 > isize::MAX as usize) {
+            std::process::abort();
         }
     }
 
@@ -249,6 +266,17 @@ impl State {
         debug_assert!(prev.ref_count() >= 1);
         trace!(
             "MONOIO DEBUG[State]: ref_dec {}, ptr: {:p}",
+            prev.ref_count() - 1,
+            self
+        );
+        prev.ref_count() == 1
+    }
+
+    pub(crate) fn ref_dec_local(&self) -> bool {
+        let prev = Snapshot(fetch_sub_local(&self.0, REF_ONE));
+        debug_assert!(prev.ref_count() >= 1);
+        trace!(
+            "MONOIO DEBUG[State]: ref_dec_local {}, ptr: {:p}",
             prev.ref_count() - 1,
             self
         );
