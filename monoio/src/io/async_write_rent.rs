@@ -1,8 +1,9 @@
+use alloc::rc::Rc;
 use std::{
     future::Future,
     io::{Cursor, Write},
 };
-
+use std::cell::RefCell;
 use crate::{
     buf::{IoBuf, IoVecBuf},
     BufResult,
@@ -280,5 +281,40 @@ impl<T: ?Sized + AsyncWriteRent + Unpin> AsyncWriteRent for Box<T> {
     #[inline]
     fn shutdown(&mut self) -> impl Future<Output = std::io::Result<()>> {
         (**self).shutdown()
+    }
+}
+
+
+impl<T: ?Sized + AsyncWriteRent + Unpin> AsyncWriteRent for Rc<RefCell<T>> {
+    #[inline]
+    fn write<B: IoBuf>(&mut self, buf: B) -> impl Future<Output = BufResult<usize, B>> {
+        async move {
+            let mut inner = self.borrow_mut();
+            inner.write(buf).await
+        }
+    }
+
+    #[inline]
+    fn writev<B: IoVecBuf>(&mut self, buf_vec: B) -> impl Future<Output = BufResult<usize, B>> {
+        async move {
+            let mut inner = self.borrow_mut();
+            inner.writev(buf_vec).await
+        }
+    }
+
+    #[inline]
+    fn flush(&mut self) -> impl Future<Output = std::io::Result<()>> {
+        async move {
+            let mut inner = self.borrow_mut();
+            inner.flush().await
+        }
+    }
+
+    #[inline]
+    fn shutdown(&mut self) -> impl Future<Output = std::io::Result<()>> {
+        async move {
+            let mut inner = self.borrow_mut();
+            inner.shutdown().await
+        }
     }
 }

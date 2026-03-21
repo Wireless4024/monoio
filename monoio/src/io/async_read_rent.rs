@@ -1,5 +1,6 @@
+use alloc::rc::Rc;
 use std::{future::Future, io::Cursor};
-
+use std::cell::RefCell;
 use crate::{
     buf::{IoBufMut, IoVecBufMut},
     BufResult,
@@ -228,5 +229,24 @@ impl<T: ?Sized + AsyncReadRent> AsyncReadRent for Box<T> {
     #[inline]
     fn readv<B: IoVecBufMut>(&mut self, buf: B) -> impl Future<Output = BufResult<usize, B>> {
         (**self).readv(buf)
+    }
+}
+
+// invalid but constructing this type should know what they are doing
+impl<T: ?Sized + AsyncReadRent> AsyncReadRent for Rc<RefCell<T>> {
+    #[inline]
+    fn read<B: IoBufMut>(&mut self, buf: B) -> impl Future<Output = BufResult<usize, B>> {
+        async move {
+            let mut handle = self.borrow_mut();
+            handle.read(buf).await
+        }
+    }
+
+    #[inline]
+    fn readv<B: IoVecBufMut>(&mut self, buf: B) -> impl Future<Output = BufResult<usize, B>> {
+        async move {
+            let mut handle = self.borrow_mut();
+            handle.readv(buf).await
+        }
     }
 }
