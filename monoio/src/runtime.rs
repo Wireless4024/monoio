@@ -1,5 +1,3 @@
-use alloc::rc::Rc;
-use std::collections::VecDeque;
 use std::future::Future;
 
 #[cfg(any(all(target_os = "linux", feature = "iouring"), feature = "legacy"))]
