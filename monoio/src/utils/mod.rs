@@ -23,5 +23,8 @@ pub use self::ctrlc::{CtrlC, Error as CtrlCError};
 mod bind_to_cpu_set;
 pub(crate) mod local_atomic;
 
+/// helper for register hook before runtime park
+pub mod pre_park_hook;
+
 #[cfg(feature = "utils")]
 pub use bind_to_cpu_set::{bind_to_cpu_set, BindError};

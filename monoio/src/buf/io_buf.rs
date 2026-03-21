@@ -180,6 +180,32 @@ unsafe impl IoBuf for bytes::BytesMut {
     }
 }
 
+#[cfg(feature = "ntex-bytes")]
+unsafe impl IoBuf for ntex_bytes::Bytes {
+    #[inline]
+    fn read_ptr(&self) -> *const u8 {
+        self.as_ptr()
+    }
+
+    #[inline]
+    fn bytes_init(&self) -> usize {
+        self.len()
+    }
+}
+
+#[cfg(feature = "ntex-bytes")]
+unsafe impl IoBuf for ntex_bytes::BytesMut {
+    #[inline]
+    fn read_ptr(&self) -> *const u8 {
+        self.as_ptr()
+    }
+
+    #[inline]
+    fn bytes_init(&self) -> usize {
+        self.len()
+    }
+}
+
 unsafe impl<T> IoBuf for Rc<T>
 where
     T: IoBuf,
@@ -360,6 +386,26 @@ unsafe impl<const N: usize> IoBufMut for &'static mut [u8; N] {
 
 #[cfg(feature = "bytes")]
 unsafe impl IoBufMut for bytes::BytesMut {
+    #[inline]
+    fn write_ptr(&mut self) -> *mut u8 {
+        self.as_mut_ptr()
+    }
+
+    #[inline]
+    fn bytes_total(&mut self) -> usize {
+        self.capacity()
+    }
+
+    #[inline]
+    unsafe fn set_init(&mut self, init_len: usize) {
+        if self.len() < init_len {
+            self.set_len(init_len);
+        }
+    }
+}
+
+#[cfg(feature = "ntex-bytes")]
+unsafe impl IoBufMut for ntex_bytes::BytesMut {
     #[inline]
     fn write_ptr(&mut self) -> *mut u8 {
         self.as_mut_ptr()

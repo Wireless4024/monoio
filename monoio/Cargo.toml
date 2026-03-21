@@ -36,6 +36,7 @@ tracing = { version = "0.1", default-features = false, features = [
 ctrlc = { version = "3", optional = true }
 lazy_static = { version = "1", optional = true }
 once_cell = { version = "1.19.0", optional = true }
+ntex-bytes = { version = "1.5", optional = true }
 
 # windows dependencies(will be added when windows support finished)
 [target.'cfg(windows)'.dependencies]
@@ -97,8 +98,9 @@ poll-io = ["tokio", "mio"]
 # signal enables setting ctrl_c handler
 signal = ["ctrlc", "sync"]
 signal-termination = ["signal", "ctrlc/termination"]
+ntex-bytes = ["dep:ntex-bytes"]
 # by default both iouring and legacy are enabled
-default = ["async-cancel", "bytes", "iouring", "legacy", "macros", "utils"]
+default = ["async-cancel", "bytes", "iouring", "macros", "utils", "unstable"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
