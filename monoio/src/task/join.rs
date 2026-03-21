@@ -14,7 +14,9 @@ pub struct JoinHandle<T> {
     _p: PhantomData<T>,
 }
 
+#[cfg(feature = "sync")]
 unsafe impl<T: Send> Send for JoinHandle<T> {}
+#[cfg(feature = "sync")]
 unsafe impl<T: Send> Sync for JoinHandle<T> {}
 
 impl<T> JoinHandle<T> {
