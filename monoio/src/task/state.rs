@@ -7,7 +7,8 @@ use std::{
     },
 };
 
-use crate::utils::local_atomic::{fetch_add_local, fetch_sub_local};
+#[cfg(not(feature = "sync"))]
+use crate::utils::local_atomic::*;
 
 pub(crate) struct State(AtomicUsize);
 
@@ -229,6 +230,7 @@ impl State {
         })
     }
 
+    #[cfg(feature = "sync")]
     pub(crate) fn ref_inc(&self) {
         use std::{process, sync::atomic::Ordering::Relaxed};
 
@@ -246,6 +248,19 @@ impl State {
         }
     }
 
+    #[cfg(not(feature = "sync"))]
+    #[inline(always)]
+    pub(crate) fn ref_inc(&self) {
+        self.ref_inc_local()
+    }
+
+    #[cfg(feature = "sync")]
+    #[inline(always)]
+    pub(crate) fn ref_inc_local(&self) {
+        self.ref_inc()
+    }
+
+    #[cfg(not(feature = "sync"))]
     pub(crate) fn ref_inc_local(&self) {
         let prev = Snapshot(fetch_add_local(&self.0, REF_ONE));
         trace!(
@@ -261,6 +276,7 @@ impl State {
     }
 
     /// Returns `true` if the task should be released.
+    #[cfg(feature = "sync")]
     pub(crate) fn ref_dec(&self) -> bool {
         let prev = Snapshot(self.0.fetch_sub(REF_ONE, AcqRel));
         debug_assert!(prev.ref_count() >= 1);
@@ -272,6 +288,19 @@ impl State {
         prev.ref_count() == 1
     }
 
+    #[cfg(not(feature = "sync"))]
+    #[inline(always)]
+    pub(crate) fn ref_dec(&self) -> bool {
+        self.ref_dec_local()
+    }
+
+    #[cfg(feature = "sync")]
+    #[inline(always)]
+    pub(crate) fn ref_dec_local(&self) -> bool {
+        self.ref_dec()
+    }
+
+    #[cfg(not(feature = "sync"))]
     pub(crate) fn ref_dec_local(&self) -> bool {
         let prev = Snapshot(fetch_sub_local(&self.0, REF_ONE));
         debug_assert!(prev.ref_count() >= 1);
@@ -283,6 +312,7 @@ impl State {
         prev.ref_count() == 1
     }
 
+    #[cfg(feature = "sync")]
     fn fetch_update_action<F, T>(&self, mut f: F) -> T
     where
         F: FnMut(Snapshot) -> (T, Option<Snapshot>),
@@ -305,6 +335,30 @@ impl State {
         }
     }
 
+    #[cfg(not(feature = "sync"))]
+    fn fetch_update_action<F, T>(&self, mut f: F) -> T
+    where
+        F: FnMut(Snapshot) -> (T, Option<Snapshot>),
+    {
+        let mut curr = self.load();
+
+        loop {
+            let (output, next) = f(curr);
+            let next = match next {
+                Some(next) => next,
+                None => return output,
+            };
+
+            let res = compare_exchange_local(&self.0, curr.0, next.0, AcqRel, Acquire);
+
+            match res {
+                Ok(_) => return output,
+                Err(actual) => curr = Snapshot(actual),
+            }
+        }
+    }
+
+    #[cfg(feature = "sync")]
     fn fetch_update<F>(&self, mut f: F) -> Result<Snapshot, Snapshot>
     where
         F: FnMut(Snapshot) -> Option<Snapshot>,
@@ -318,6 +372,28 @@ impl State {
             };
 
             let res = self.0.compare_exchange(curr.0, next.0, AcqRel, Acquire);
+
+            match res {
+                Ok(_) => return Ok(next),
+                Err(actual) => curr = Snapshot(actual),
+            }
+        }
+    }
+
+    #[cfg(not(feature = "sync"))]
+    fn fetch_update<F>(&self, mut f: F) -> Result<Snapshot, Snapshot>
+    where
+        F: FnMut(Snapshot) -> Option<Snapshot>,
+    {
+        let mut curr = self.load();
+
+        loop {
+            let next = match f(curr) {
+                Some(next) => next,
+                None => return Err(curr),
+            };
+
+            let res = compare_exchange_local(&self.0, curr.0, next.0, AcqRel, Acquire);
 
             match res {
                 Ok(_) => return Ok(next),
