@@ -1,3 +1,5 @@
+use alloc::rc::Rc;
+use std::collections::VecDeque;
 use std::future::Future;
 
 #[cfg(any(all(target_os = "linux", feature = "iouring"), feature = "legacy"))]
@@ -26,6 +28,7 @@ thread_local! {
         tasks: Default::default(),
         time_handle: None,
         blocking_handle: crate::blocking::BlockingHandle::Empty(crate::blocking::BlockingStrategy::Panic),
+        pre_park_hooks: Default::default(),
     };
 }
 
@@ -54,6 +57,7 @@ pub(crate) struct Context {
     /// Blocking Handle
     #[cfg(feature = "sync")]
     pub(crate) blocking_handle: crate::blocking::BlockingHandle,
+    pub(crate) pre_park_hooks: crate::utils::pre_park_hook::PreParkHooks,
 }
 
 impl Context {
@@ -68,6 +72,7 @@ impl Context {
             tasks: TaskQueue::default(),
             time_handle: None,
             blocking_handle,
+            pre_park_hooks: Default::default(),
         }
     }
 
@@ -79,6 +84,7 @@ impl Context {
             thread_id,
             tasks: TaskQueue::default(),
             time_handle: None,
+            pre_park_hooks: Default::default(),
         }
     }
 
@@ -181,6 +187,9 @@ impl<D> Runtime<D> {
                         // Cold path
                         let _ = self.driver.submit();
                     }
+
+                    // run hooks before runtime park
+                    self.context.pre_park_hooks.run();
 
                     // Wait and Process CQ(the error is ignored for not debug mode)
                     #[cfg(not(all(debug_assertions, feature = "debug")))]
